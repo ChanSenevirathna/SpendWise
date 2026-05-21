@@ -222,12 +222,18 @@
   </div>
 
   <div class="panel" data-panel="wallets">
-    <div style="font-size:0.95rem;font-weight:700;margin-bottom:1.2rem">Your Wallets</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem;flex-wrap:wrap;gap:0.75rem">
+      <div style="font-size:0.95rem;font-weight:700">Your Wallets</div>
+      <button class="btn-outline" onclick="openTransferModal('wallet')"><i class="ti ti-transfer"></i> Transfer Money</button>
+    </div>
     <div class="card-grid" id="wallet-cards"></div>
   </div>
 
   <div class="panel" data-panel="categories">
-    <div style="font-size:0.95rem;font-weight:700;margin-bottom:1.2rem">Budget Categories</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem;flex-wrap:wrap;gap:0.75rem">
+      <div style="font-size:0.95rem;font-weight:700">Budget Categories</div>
+      <button class="btn-outline" onclick="openTransferModal('category')"><i class="ti ti-transfer"></i> Move Budget</button>
+    </div>
     <div class="card-grid" id="category-cards"></div>
   </div>
 
@@ -304,7 +310,7 @@ const isConfigured = SUPABASE_URL.startsWith('http') && SUPABASE_ANON.length > 2
 
 let sb = null;
 let user = null;
-let state = { wallets:[], categories:[], incomes:[], expenses:[], allocations:[] };
+let state = { wallets:[], categories:[], incomes:[], expenses:[], allocations:[], transfers:[], categoryTransfers:[] };
 let charts = { wallet:null, cat:null };
 let signupMode = false;
 let range = { from:null, to:null }; // dashboard date range
@@ -417,15 +423,18 @@ async function enterApp(){
 
 /* ---------- DATA LOAD ---------- */
 async function loadAll(){
-  const [w,c,inc,exp,al] = await Promise.all([
+  const [w,c,inc,exp,al,tr,ctr] = await Promise.all([
     sb.from('wallets').select('*').order('created_at'),
     sb.from('categories').select('*').order('created_at'),
     sb.from('incomes').select('*').order('txn_date',{ascending:false}),
     sb.from('expenses').select('*').order('txn_date',{ascending:false}),
     sb.from('allocations').select('*'),
+    sb.from('transfers').select('*').order('txn_date',{ascending:false}),
+    sb.from('category_transfers').select('*').order('txn_date',{ascending:false}),
   ]);
   state.wallets=w.data||[]; state.categories=c.data||[];
   state.incomes=inc.data||[]; state.expenses=exp.data||[]; state.allocations=al.data||[];
+  state.transfers=tr.data||[]; state.categoryTransfers=ctr.data||[];
   render();
 }
 
@@ -433,9 +442,17 @@ async function loadAll(){
 function walletBalance(id){
   const allocIn=state.allocations.filter(a=>a.target_type==='wallet'&&a.wallet_id===id).reduce((s,a)=>s+Number(a.amount),0);
   const spent=state.expenses.filter(e=>e.wallet_id===id).reduce((s,e)=>s+Number(e.amount),0);
-  return allocIn-spent;
+  const trIn=state.transfers.filter(t=>t.to_wallet_id===id).reduce((s,t)=>s+Number(t.amount),0);
+  const trOut=state.transfers.filter(t=>t.from_wallet_id===id).reduce((s,t)=>s+Number(t.amount),0);
+  return allocIn+trIn-trOut-spent;
 }
-function catAllocated(id){ return state.allocations.filter(a=>a.target_type==='category'&&a.category_id===id).reduce((s,a)=>s+Number(a.amount),0); }
+// category allocated budget, adjusted for budget transfers in/out
+function catAllocated(id){
+  const allocIn=state.allocations.filter(a=>a.target_type==='category'&&a.category_id===id).reduce((s,a)=>s+Number(a.amount),0);
+  const trIn=state.categoryTransfers.filter(t=>t.to_category_id===id).reduce((s,t)=>s+Number(t.amount),0);
+  const trOut=state.categoryTransfers.filter(t=>t.from_category_id===id).reduce((s,t)=>s+Number(t.amount),0);
+  return allocIn+trIn-trOut;
+}
 function catSpent(id){ return state.expenses.filter(e=>e.category_id===id).reduce((s,e)=>s+Number(e.amount),0); }
 // period-scoped spending for a category (respects the active date range)
 function catSpentInRange(id){ return state.expenses.filter(e=>e.category_id===id&&inRange(e.txn_date)).reduce((s,e)=>s+Number(e.amount),0); }
@@ -571,13 +588,27 @@ function render(){
 
 /* ---------- HISTORY (own date range, no max window) ---------- */
 function historyTxns(){
-  return [...state.incomes.map(i=>({...i,type:'income'})),...state.expenses.map(e=>({...e,type:'expense'}))]
+  const wt=state.transfers.map(t=>({...t,type:'transfer'}));
+  const ct=state.categoryTransfers.map(t=>({...t,type:'cat_transfer'}));
+  return [...state.incomes.map(i=>({...i,type:'income'})),...state.expenses.map(e=>({...e,type:'expense'})),...wt,...ct]
     .filter(t=> (!hrange.from || t.txn_date>=hrange.from) && (!hrange.to || t.txn_date<=hrange.to) )
     .sort((a,b)=>new Date(b.txn_date)-new Date(a.txn_date));
 }
 function renderHistory(){
   const all=historyTxns();
   document.getElementById('txn-list').innerHTML=all.length?all.map(t=>{
+    if(t.type==='transfer'){
+      const f=state.wallets.find(x=>x.id===t.from_wallet_id), to=state.wallets.find(x=>x.id===t.to_wallet_id);
+      return `<div class="row-item"><div class="row-icon" style="background:#2a2540;color:#a78bfa"><i class="ti ti-transfer"></i></div>
+        <div class="row-info"><div class="row-name">Wallet Transfer</div><div class="row-sub">${t.txn_date} · ${f?f.name:'?'} → ${to?to.name:'?'}</div></div>
+        <div class="row-amount" style="color:#a78bfa">${fmt(t.amount)}</div></div>`;
+    }
+    if(t.type==='cat_transfer'){
+      const f=state.categories.find(x=>x.id===t.from_category_id), to=state.categories.find(x=>x.id===t.to_category_id);
+      return `<div class="row-item"><div class="row-icon" style="background:#2a2540;color:#a78bfa"><i class="ti ti-transfer"></i></div>
+        <div class="row-info"><div class="row-name">Budget Move</div><div class="row-sub">${t.txn_date} · ${f?f.name:'?'} → ${to?to.name:'?'}</div></div>
+        <div class="row-amount" style="color:#a78bfa">${fmt(t.amount)}</div></div>`;
+    }
     const inc=t.type==='income';
     const w=state.wallets.find(x=>x.id===t.wallet_id); const c=state.categories.find(x=>x.id===t.category_id);
     const detail=inc?'Income allocated':((w?w.name:'?')+' · '+(c?c.name:'?'));
@@ -954,6 +985,83 @@ function exportExcel(){
   const stamp=(!hrange.from&&!hrange.to)?'all-time':`${hrange.from}_to_${hrange.to}`;
   XLSX.writeFile(wb, `SpendWise_Report_${stamp}.xlsx`);
   showToast('Excel report downloaded','ti-check');
+}
+
+/* ---------- TRANSFERS (wallet→wallet & category→category) ---------- */
+function openTransferModal(kind){
+  // kind = 'wallet' or 'category'
+  const items = kind==='wallet' ? state.wallets : state.categories;
+  if(items.length<2){
+    document.getElementById('modal-root').innerHTML=`
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+        <h3><i class="ti ti-alert-triangle" style="color:#fbbf24"></i> Need two ${kind==='wallet'?'wallets':'categories'}</h3>
+        <div class="modal-note warn">You need at least two ${kind==='wallet'?'wallets':'categories'} to make a transfer. Add another first.</div>
+        <div class="modal-actions"><button class="modal-btn ghost" onclick="closeModal()">OK</button></div>
+      </div></div>`;
+    return;
+  }
+  const isW = kind==='wallet';
+  const title = isW ? 'Transfer Money' : 'Move Budget';
+  const balLabel = isW ? 'balance' : 'remaining budget';
+  const balOf = isW ? (id=>walletBalance(id)) : (id=>catAllocated(id)-catSpent(id));
+  const opts = items.map(it=>`<option value="${it.id}">${it.name} (${fmt(balOf(it.id))} ${balLabel})</option>`).join('');
+  const optsTo = items.map((it,i)=>`<option value="${it.id}" ${i===1?'selected':''}>${it.name}</option>`).join('');
+
+  document.getElementById('modal-root').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+      <h3><i class="ti ti-transfer" style="color:#34d399"></i> ${title}</h3>
+      ${isW?'<div class="modal-note">Move cash from one wallet to another. Balances update automatically.</div>'
+           :'<div class="modal-note">Move allocated budget from one category to another. Spending already done stays put.</div>'}
+      <div class="field"><label>From</label><select class="form-select" id="tr-from" onchange="syncTransferOptions('${kind}')">${opts}</select></div>
+      <div class="field"><label>To</label><select class="form-select" id="tr-to">${optsTo}</select></div>
+      <div class="field"><label>Amount (LKR)</label><input type="number" class="form-input" id="tr-amount" placeholder="0" min="0"></div>
+      <div class="field"><label>Date</label><input type="date" class="form-input" id="tr-date" value="${today()}"></div>
+      <div class="validation ok" id="tr-info" style="display:none"></div>
+      <div class="modal-actions">
+        <button class="modal-btn ghost" onclick="closeModal()">Cancel</button>
+        <button class="modal-btn primary" id="tr-save" onclick="saveTransfer('${kind}')">Transfer</button>
+      </div>
+    </div></div>`;
+  syncTransferOptions(kind);
+}
+// stop "from" and "to" being the same
+function syncTransferOptions(kind){
+  const items = kind==='wallet' ? state.wallets : state.categories;
+  const from=document.getElementById('tr-from').value;
+  const to=document.getElementById('tr-to');
+  const cur=to.value;
+  to.innerHTML=items.filter(it=>it.id!==from).map(it=>`<option value="${it.id}">${it.name}</option>`).join('');
+  if(cur && cur!==from) to.value=cur;
+}
+async function saveTransfer(kind){
+  const from=document.getElementById('tr-from').value;
+  const to=document.getElementById('tr-to').value;
+  const amount=parseFloat(document.getElementById('tr-amount').value);
+  const date=document.getElementById('tr-date').value||today();
+  if(from===to){ showToast('Pick two different '+(kind==='wallet'?'wallets':'categories'),'ti-alert-circle',true); return; }
+  if(!amount||amount<=0){ showToast('Enter a valid amount','ti-alert-circle',true); return; }
+
+  // soft check: warn if moving more than available, but allow (negatives permitted per spec)
+  const avail = kind==='wallet' ? walletBalance(from) : (catAllocated(from)-catSpent(from));
+  if(amount>avail){
+    const ok=confirm(`This transfers more than the available ${kind==='wallet'?'balance':'budget'} (${fmt(avail)}). Continue anyway?`);
+    if(!ok) return;
+  }
+
+  document.getElementById('tr-save').disabled=true;
+  let error;
+  if(kind==='wallet'){
+    ({ error } = await sb.from('transfers').insert({
+      user_id:user.id, from_wallet_id:from, to_wallet_id:to, amount, txn_date:date, notes:'Wallet transfer'
+    }));
+  } else {
+    ({ error } = await sb.from('category_transfers').insert({
+      user_id:user.id, from_category_id:from, to_category_id:to, amount, txn_date:date, notes:'Budget transfer'
+    }));
+  }
+  if(error){ showToast(error.message,'ti-alert-circle',true); document.getElementById('tr-save').disabled=false; return; }
+  closeModal(); await loadAll();
+  showToast(kind==='wallet'?'Money transferred':'Budget moved','ti-check');
 }
 
 /* ---------- TOAST ---------- */
