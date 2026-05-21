@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{background:#0d0f14;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh}
@@ -264,7 +265,22 @@
   </div>
 
   <div class="panel" data-panel="history">
-    <div style="font-size:0.95rem;font-weight:700;margin-bottom:1.2rem">Transaction History</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem;flex-wrap:wrap;gap:0.75rem">
+      <div style="font-size:0.95rem;font-weight:700">Transaction History</div>
+      <button class="btn-outline" onclick="exportExcel()"><i class="ti ti-file-spreadsheet"></i> Export Excel</button>
+    </div>
+    <div class="range-bar">
+      <div class="rb-label"><i class="ti ti-calendar"></i> Period</div>
+      <div class="rb-field"><small>From</small><input type="date" id="hrange-from" onchange="onHistoryRangeChange()"></div>
+      <div class="rb-field"><small>To</small><input type="date" id="hrange-to" onchange="onHistoryRangeChange()"></div>
+      <div class="rb-presets">
+        <button class="rb-preset" data-hpreset="thisMonth" onclick="applyHistoryPreset('thisMonth')">This month</button>
+        <button class="rb-preset" data-hpreset="lastMonth" onclick="applyHistoryPreset('lastMonth')">Last month</button>
+        <button class="rb-preset" data-hpreset="thisYear" onclick="applyHistoryPreset('thisYear')">This year</button>
+        <button class="rb-preset" data-hpreset="all" onclick="applyHistoryPreset('all')">All time</button>
+      </div>
+    </div>
+    <div class="rb-info" id="hrange-info"></div>
     <div class="dash-box"><div id="txn-list"></div></div>
   </div>
 </div>
@@ -291,7 +307,8 @@ let user = null;
 let state = { wallets:[], categories:[], incomes:[], expenses:[], allocations:[] };
 let charts = { wallet:null, cat:null };
 let signupMode = false;
-let range = { from:null, to:null }; // active date range (YYYY-MM-DD strings)
+let range = { from:null, to:null }; // dashboard date range
+let hrange = { from:null, to:null }; // history date range (no max window)
 const MAX_RANGE_DAYS = 60;
 
 /* ---------- BOOT ---------- */
@@ -387,9 +404,13 @@ async function enterApp(){
   const now=new Date();
   range.from=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];
   range.to=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().split('T')[0];
+  // history default = current month too
+  hrange.from=range.from; hrange.to=range.to;
   initCharts();
   await loadAll();
   setRangeInputs();
+  setHistoryInputs();
+  highlightHistoryPreset('thisMonth');
   document.getElementById('loading').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
 }
@@ -545,8 +566,17 @@ function render(){
   document.getElementById('exp-wallet').innerHTML=state.wallets.map(w=>`<option value="${w.id}">${w.name} (${fmt(walletBalance(w.id))})</option>`).join('');
   document.getElementById('exp-cat').innerHTML=state.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
 
-  const all=[...state.incomes.map(i=>({...i,type:'income'})),...state.expenses.map(e=>({...e,type:'expense'}))]
+  renderHistory();
+}
+
+/* ---------- HISTORY (own date range, no max window) ---------- */
+function historyTxns(){
+  return [...state.incomes.map(i=>({...i,type:'income'})),...state.expenses.map(e=>({...e,type:'expense'}))]
+    .filter(t=> (!hrange.from || t.txn_date>=hrange.from) && (!hrange.to || t.txn_date<=hrange.to) )
     .sort((a,b)=>new Date(b.txn_date)-new Date(a.txn_date));
+}
+function renderHistory(){
+  const all=historyTxns();
   document.getElementById('txn-list').innerHTML=all.length?all.map(t=>{
     const inc=t.type==='income';
     const w=state.wallets.find(x=>x.id===t.wallet_id); const c=state.categories.find(x=>x.id===t.category_id);
@@ -555,7 +585,7 @@ function render(){
       <i class="ti ${inc?'ti-arrow-down-left':'ti-arrow-up-right'}"></i></div>
       <div class="row-info"><div class="row-name">${t.description||(inc?'Income':'Expense')}</div><div class="row-sub">${t.txn_date} · ${detail}</div></div>
       <div class="row-amount" style="color:${inc?'#34d399':'#f87171'}">${inc?'+':'−'}${fmt(t.amount)}</div></div>`;
-  }).join(''):'<div style="text-align:center;color:#374151;padding:2rem 0;font-size:0.85rem">No transactions yet</div>';
+  }).join(''):'<div style="text-align:center;color:#374151;padding:2rem 0;font-size:0.85rem">No transactions in this period</div>';
 }
 
 /* ---------- CHARTS ---------- */
@@ -824,6 +854,106 @@ async function confirmDeleteCategory(id, hasBalance){
   const { error } = await sb.from('categories').delete().eq('id',id);
   if(error){ showToast(error.message,'ti-alert-circle',true); document.getElementById('dc-confirm').disabled=false; return; }
   closeModal(); await loadAll(); showToast(hasBalance?'Budget reassigned & category deleted':'Category deleted','ti-check');
+}
+
+/* ---------- HISTORY DATE RANGE (no 60-day cap) ---------- */
+function setHistoryInputs(){
+  document.getElementById('hrange-from').value=hrange.from||'';
+  document.getElementById('hrange-to').value=hrange.to||'';
+  updateHistoryInfo();
+}
+function updateHistoryInfo(){
+  const info=document.getElementById('hrange-info');
+  if(!hrange.from&&!hrange.to){ info.innerHTML='<i class="ti ti-info-circle"></i> Showing all transactions'; return; }
+  info.innerHTML=`<i class="ti ti-info-circle"></i> ${fmtDate(hrange.from)} → ${fmtDate(hrange.to)}`;
+}
+function applyHistoryPreset(p){
+  const now=new Date();
+  if(p==='thisMonth'){
+    hrange.from=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];
+    hrange.to=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().split('T')[0];
+  } else if(p==='lastMonth'){
+    hrange.from=new Date(now.getFullYear(),now.getMonth()-1,1).toISOString().split('T')[0];
+    hrange.to=new Date(now.getFullYear(),now.getMonth(),0).toISOString().split('T')[0];
+  } else if(p==='thisYear'){
+    hrange.from=new Date(now.getFullYear(),0,1).toISOString().split('T')[0];
+    hrange.to=new Date(now.getFullYear(),11,31).toISOString().split('T')[0];
+  } else if(p==='all'){
+    hrange.from=null; hrange.to=null;
+  }
+  highlightHistoryPreset(p);
+  setHistoryInputs(); renderHistory();
+}
+function highlightHistoryPreset(p){
+  document.querySelectorAll('.rb-preset[data-hpreset]').forEach(b=>b.classList.remove('active'));
+  if(p) document.querySelector(`[data-hpreset="${p}"]`)?.classList.add('active');
+}
+function onHistoryRangeChange(){
+  let from=document.getElementById('hrange-from').value;
+  let to=document.getElementById('hrange-to').value;
+  if(from&&to&&new Date(from)>new Date(to)){ const t=from; from=to; to=t; }
+  hrange.from=from||null; hrange.to=to||null;
+  highlightHistoryPreset(null);
+  setHistoryInputs(); renderHistory();
+}
+
+/* ---------- EXCEL EXPORT (respects history range) ---------- */
+function exportExcel(){
+  const txns=historyTxns();
+  if(!txns.length){ showToast('No transactions to export','ti-alert-circle',true); return; }
+
+  const periodLabel = (!hrange.from&&!hrange.to) ? 'All time' : `${hrange.from} to ${hrange.to}`;
+
+  // Sheet 1: All Transactions
+  const allRows=txns.map(t=>{
+    const w=state.wallets.find(x=>x.id===t.wallet_id); const c=state.categories.find(x=>x.id===t.category_id);
+    return {
+      Date:t.txn_date, Type:t.type==='income'?'Income':'Expense',
+      Description:t.description||'', Wallet:w?w.name:(t.type==='income'?'(allocated)':''),
+      Category:c?c.name:(t.type==='income'?'(allocated)':''),
+      Income:t.type==='income'?Number(t.amount):'', Expense:t.type==='expense'?Number(t.amount):''
+    };
+  });
+
+  // Sheet 2: By Category (expenses in range)
+  const byCat={};
+  txns.filter(t=>t.type==='expense').forEach(e=>{
+    const c=state.categories.find(x=>x.id===e.category_id); const k=c?c.name:'Uncategorised';
+    byCat[k]=(byCat[k]||0)+Number(e.amount);
+  });
+  const catRows=Object.entries(byCat).map(([Category,Total])=>({Category,'Total Spent':Total}));
+
+  // Sheet 3: By Wallet (expenses in range)
+  const byWallet={};
+  txns.filter(t=>t.type==='expense').forEach(e=>{
+    const w=state.wallets.find(x=>x.id===e.wallet_id); const k=w?w.name:'Unknown';
+    byWallet[k]=(byWallet[k]||0)+Number(e.amount);
+  });
+  const walletRows=Object.entries(byWallet).map(([Wallet,Total])=>({Wallet,'Total Spent':Total}));
+
+  // Summary header rows
+  const totalIncome=txns.filter(t=>t.type==='income').reduce((s,t)=>s+Number(t.amount),0);
+  const totalExpense=txns.filter(t=>t.type==='expense').reduce((s,t)=>s+Number(t.amount),0);
+  const summary=[
+    {A:'SpendWise — Transaction Report'},
+    {A:'Period',B:periodLabel},
+    {A:'Generated',B:new Date().toLocaleString('en-GB')},
+    {A:''},
+    {A:'Total Income',B:totalIncome},
+    {A:'Total Expense',B:totalExpense},
+    {A:'Net',B:totalIncome-totalExpense},
+  ];
+
+  const wb=XLSX.utils.book_new();
+  const wsAll=XLSX.utils.json_to_sheet(summary,{header:['A','B'],skipHeader:true});
+  XLSX.utils.sheet_add_json(wsAll, allRows, {origin:'A9'});
+  XLSX.utils.book_append_sheet(wb, wsAll, 'All Transactions');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(catRows.length?catRows:[{Category:'No expenses',['Total Spent']:0}]), 'By Category');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(walletRows.length?walletRows:[{Wallet:'No expenses',['Total Spent']:0}]), 'By Wallet');
+
+  const stamp=(!hrange.from&&!hrange.to)?'all-time':`${hrange.from}_to_${hrange.to}`;
+  XLSX.writeFile(wb, `SpendWise_Report_${stamp}.xlsx`);
+  showToast('Excel report downloaded','ti-check');
 }
 
 /* ---------- TOAST ---------- */
