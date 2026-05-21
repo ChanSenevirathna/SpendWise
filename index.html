@@ -69,7 +69,26 @@
   .prog-bg{height:6px;background:#1e2332;border-radius:3px;overflow:hidden;margin-top:5px}
   .prog-fill{height:100%;border-radius:3px;transition:width .5s}
   .card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin-bottom:1.5rem}
-  .entity-card{background:#161d2e;border:1px solid #1e2332;border-radius:12px;padding:1.2rem}
+  .entity-card{background:#161d2e;border:1px solid #1e2332;border-radius:12px;padding:1.2rem;position:relative}
+  .ec-actions{position:absolute;top:0.8rem;right:0.8rem;display:flex;gap:4px}
+  .ec-act-btn{background:#0d0f14;border:1px solid #1e2332;color:#64748b;width:28px;height:28px;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:0.9rem}
+  .ec-act-btn:hover{color:#34d399;border-color:#34d39955}
+  .ec-act-btn.del:hover{color:#f87171;border-color:#f8717155}
+  .add-entity-card{background:transparent;border:1.5px dashed #2d3548;border-radius:12px;padding:1.2rem;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;color:#64748b;min-height:150px;transition:.2s}
+  .add-entity-card:hover{border-color:#34d399;color:#34d399}
+  .add-entity-card i{font-size:1.8rem;margin-bottom:0.5rem}
+  /* MODAL */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:250;padding:1.5rem}
+  .modal{background:#111827;border:1px solid #1e2332;border-radius:16px;padding:1.8rem;width:100%;max-width:420px}
+  .modal h3{font-size:1.1rem;font-weight:700;margin-bottom:1.3rem;display:flex;align-items:center;gap:8px}
+  .modal-actions{display:flex;gap:0.7rem;margin-top:1.5rem}
+  .modal-btn{flex:1;border:none;border-radius:8px;padding:0.7rem;font-weight:700;font-size:0.88rem;cursor:pointer}
+  .modal-btn.primary{background:#34d399;color:#0d0f14}.modal-btn.primary:hover{background:#6ee7b7}
+  .modal-btn.primary:disabled{opacity:.5;cursor:not-allowed}
+  .modal-btn.danger{background:#f87171;color:#0d0f14}.modal-btn.danger:hover{background:#fca5a5}
+  .modal-btn.ghost{background:transparent;color:#94a3b8;border:1px solid #2d3548}.modal-btn.ghost:hover{color:#e2e8f0}
+  .modal-note{font-size:0.82rem;color:#94a3b8;line-height:1.6;margin-bottom:1rem;background:#0d0f14;border:1px solid #1e2332;border-radius:8px;padding:0.8rem}
+  .modal-note.warn{color:#fbbf24;border-color:#fbbf2433;background:#2d2a1e}
   .ec-icon{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;margin-bottom:0.9rem}
   .ec-name{font-size:0.95rem;font-weight:700;margin-bottom:0.2rem}
   .ec-desc{font-size:0.74rem;color:#64748b;margin-bottom:0.8rem;min-height:1rem}
@@ -226,6 +245,8 @@
   </div>
 </div>
 
+<div id="modal-root"></div>
+
 <div id="toast"><i class="ti ti-check"></i> <span id="toast-msg">Saved</span></div>
 
 <script>
@@ -374,10 +395,14 @@ function render(){
 
   document.getElementById('wallet-cards').innerHTML=state.wallets.map(w=>{
     const b=walletBalance(w.id);
-    return `<div class="entity-card"><div class="ec-icon" style="background:${w.color}22;color:${w.color}"><i class="ti ${w.icon}"></i></div>
+    return `<div class="entity-card"><div class="ec-actions">
+        <button class="ec-act-btn" onclick="openWalletModal('${w.id}')" title="Edit"><i class="ti ti-edit"></i></button>
+        <button class="ec-act-btn del" onclick="openDeleteWallet('${w.id}')" title="Delete"><i class="ti ti-trash"></i></button>
+      </div>
+      <div class="ec-icon" style="background:${w.color}22;color:${w.color}"><i class="ti ${w.icon}"></i></div>
       <div class="ec-name">${w.name}</div><div class="ec-desc">${w.description||''}</div>
       <div class="ec-balance" style="color:${b<0?'#f87171':'#e2e8f0'}">${fmt(b)}</div><div class="ec-meta">Current balance</div></div>`;
-  }).join('');
+  }).join('')+`<div class="add-entity-card" onclick="openWalletModal()"><i class="ti ti-plus"></i><span style="font-weight:600;font-size:0.88rem">Add Wallet</span></div>`;
 
   document.getElementById('category-cards').innerHTML=state.categories.map(c=>{
     const rem=catAllocated(c.id)-catSpent(c.id);
@@ -483,6 +508,108 @@ async function saveExpense(){
   document.getElementById('exp-amount').value=''; document.getElementById('exp-desc').value='';
   await loadAll(); btn.disabled=false; showToast('Expense recorded','ti-check');
   document.querySelector('.tab[data-tab="dashboard"]').click();
+}
+
+/* ---------- WALLET MANAGEMENT (add / edit / delete) ---------- */
+const WALLET_COLORS=['#34d399','#60a5fa','#a78bfa','#fb923c','#f472b6','#fbbf24','#22d3ee','#f87171'];
+const WALLET_ICONS=['ti-cash','ti-building-bank','ti-device-mobile','ti-wallet','ti-credit-card','ti-coin','ti-pig-money'];
+
+function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+function openWalletModal(id){
+  const editing = !!id;
+  const w = editing ? state.wallets.find(x=>x.id===id) : null;
+  const usedColors = state.wallets.map(x=>x.color);
+  const defColor = w ? w.color : (WALLET_COLORS.find(c=>!usedColors.includes(c))||WALLET_COLORS[0]);
+  document.getElementById('modal-root').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <h3><i class="ti ${editing?'ti-edit':'ti-wallet'}" style="color:#34d399"></i> ${editing?'Edit Wallet':'Add Wallet'}</h3>
+        <div class="field"><label>Wallet Name</label><input type="text" class="form-input" id="wm-name" placeholder="e.g. Sampath Bank" value="${w?w.name.replace(/"/g,'&quot;'):''}"></div>
+        <div class="field"><label>Description (optional)</label><input type="text" class="form-input" id="wm-desc" placeholder="e.g. Acc no · branch" value="${w&&w.description?w.description.replace(/"/g,'&quot;'):''}"></div>
+        <div class="field"><label>Colour</label><div id="wm-colors" style="display:flex;gap:8px;flex-wrap:wrap">
+          ${WALLET_COLORS.map(c=>`<div onclick="pickColor(this,'${c}')" data-c="${c}" style="width:30px;height:30px;border-radius:8px;background:${c};cursor:pointer;border:2px solid ${c===defColor?'#fff':'transparent'}"></div>`).join('')}
+        </div></div>
+        <div class="modal-actions">
+          <button class="modal-btn ghost" onclick="closeModal()">Cancel</button>
+          <button class="modal-btn primary" id="wm-save" onclick="saveWallet(${editing?`'${id}'`:'null'})">${editing?'Save Changes':'Add Wallet'}</button>
+        </div>
+      </div>
+    </div>`;
+  window._pickedColor=defColor;
+  setTimeout(()=>document.getElementById('wm-name').focus(),50);
+}
+function pickColor(el,c){
+  window._pickedColor=c;
+  document.querySelectorAll('#wm-colors div').forEach(d=>d.style.border='2px solid transparent');
+  el.style.border='2px solid #fff';
+}
+async function saveWallet(id){
+  const name=document.getElementById('wm-name').value.trim();
+  const desc=document.getElementById('wm-desc').value.trim();
+  const color=window._pickedColor||'#34d399';
+  if(!name){ showToast('Enter a wallet name','ti-alert-circle',true); return; }
+  document.getElementById('wm-save').disabled=true;
+  let error;
+  if(id){
+    ({ error } = await sb.from('wallets').update({name, description:desc, color}).eq('id',id));
+  } else {
+    ({ error } = await sb.from('wallets').insert({user_id:user.id, name, description:desc, color, icon:'ti-wallet'}));
+  }
+  if(error){ showToast(error.message,'ti-alert-circle',true); document.getElementById('wm-save').disabled=false; return; }
+  closeModal(); await loadAll(); showToast(id?'Wallet updated':'Wallet added','ti-check');
+}
+
+function openDeleteWallet(id){
+  const w=state.wallets.find(x=>x.id===id);
+  const bal=walletBalance(id);
+  const others=state.wallets.filter(x=>x.id!==id);
+  const hasBalance=Math.round(bal)!==0;
+
+  if(state.wallets.length<=1){
+    document.getElementById('modal-root').innerHTML=`
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+        <h3><i class="ti ti-alert-triangle" style="color:#fbbf24"></i> Can't delete</h3>
+        <div class="modal-note warn">You need at least one wallet. Add another wallet before deleting this one.</div>
+        <div class="modal-actions"><button class="modal-btn ghost" onclick="closeModal()">OK</button></div>
+      </div></div>`;
+    return;
+  }
+
+  document.getElementById('modal-root').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+      <h3><i class="ti ti-trash" style="color:#f87171"></i> Delete "${w.name}"</h3>
+      ${hasBalance
+        ? `<div class="modal-note warn"><i class="ti ti-info-circle"></i> This wallet has a balance of <b>${fmt(bal)}</b>. You must transfer it to another wallet before deleting.</div>
+           <div class="field"><label>Transfer remaining balance to</label>
+             <select class="form-select" id="dw-target">${others.map(o=>`<option value="${o.id}">${o.name}</option>`).join('')}</select></div>`
+        : `<div class="modal-note">This wallet has a zero balance and can be safely deleted. This cannot be undone.</div>`}
+      <div class="modal-actions">
+        <button class="modal-btn ghost" onclick="closeModal()">Cancel</button>
+        <button class="modal-btn danger" id="dw-confirm" onclick="confirmDeleteWallet('${id}',${hasBalance})">${hasBalance?'Transfer & Delete':'Delete'}</button>
+      </div>
+    </div></div>`;
+}
+async function confirmDeleteWallet(id, hasBalance){
+  document.getElementById('dw-confirm').disabled=true;
+  const bal=walletBalance(id);
+  if(hasBalance){
+    const target=document.getElementById('dw-target').value;
+    // record the transfer (audit trail) ...
+    const { error:terr } = await sb.from('transfers').insert({
+      user_id:user.id, from_wallet_id:id, to_wallet_id:target, amount:bal, txn_date:today(), notes:'Balance moved before wallet deletion'
+    });
+    if(terr){ showToast(terr.message,'ti-alert-circle',true); document.getElementById('dw-confirm').disabled=false; return; }
+    // ... and move the income allocations to the target so the balance follows
+    const { error:aerr } = await sb.from('allocations')
+      .update({wallet_id:target}).eq('wallet_id',id).eq('target_type','wallet');
+    if(aerr){ showToast(aerr.message,'ti-alert-circle',true); document.getElementById('dw-confirm').disabled=false; return; }
+    // reassign any expenses that referenced this wallet
+    await sb.from('expenses').update({wallet_id:target}).eq('wallet_id',id);
+  }
+  const { error } = await sb.from('wallets').delete().eq('id',id);
+  if(error){ showToast(error.message,'ti-alert-circle',true); document.getElementById('dw-confirm').disabled=false; return; }
+  closeModal(); await loadAll(); showToast(hasBalance?'Balance transferred & wallet deleted':'Wallet deleted','ti-check');
 }
 
 /* ---------- TOAST ---------- */
