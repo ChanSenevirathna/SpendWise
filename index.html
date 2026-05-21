@@ -14,8 +14,19 @@
   .hidden{display:none!important}
 
   /* LOGIN */
-  #login{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem}
-  .login-card{background:#111827;border:1px solid #1e2332;border-radius:16px;padding:2.5rem;width:100%;max-width:380px;text-align:center}
+  #login{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem;position:relative;overflow:hidden;background:radial-gradient(circle at 20% 20%,#0f2920 0%,transparent 45%),radial-gradient(circle at 80% 75%,#0d1f33 0%,transparent 45%),#0a0c10}
+  /* faint grid overlay */
+  #login::before{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(52,211,153,0.045) 1px,transparent 1px),linear-gradient(90deg,rgba(52,211,153,0.045) 1px,transparent 1px);background-size:46px 46px;mask-image:radial-gradient(circle at center,#000 0%,transparent 80%);-webkit-mask-image:radial-gradient(circle at center,#000 0%,transparent 80%);pointer-events:none}
+  /* floating glow blobs */
+  .blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;pointer-events:none;animation:float 14s ease-in-out infinite}
+  .blob.b1{width:340px;height:340px;background:#34d399;top:-90px;left:-60px;animation-delay:0s}
+  .blob.b2{width:300px;height:300px;background:#3b82f6;bottom:-80px;right:-50px;animation-delay:-5s}
+  .blob.b3{width:220px;height:220px;background:#a855f7;top:50%;left:60%;opacity:.3;animation-delay:-9s}
+  @keyframes float{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(30px,-30px) scale(1.08)}66%{transform:translate(-20px,25px) scale(0.95)}}
+  /* floating currency symbols */
+  .coin{position:absolute;color:rgba(148,163,184,0.10);font-weight:800;pointer-events:none;animation:drift 18s linear infinite}
+  @keyframes drift{0%{transform:translateY(20px);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateY(-120px);opacity:0}}
+  .login-card{background:rgba(17,24,39,0.72);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(52,211,153,0.18);border-radius:18px;padding:2.5rem;width:100%;max-width:380px;text-align:center;position:relative;z-index:2;box-shadow:0 20px 60px rgba(0,0,0,0.5)}
   .login-card .logo{font-size:1.6rem;font-weight:800;color:#34d399;margin-bottom:0.4rem}
   .login-card .logo span{color:#e2e8f0}
   .login-card p{color:#64748b;font-size:0.9rem;margin-bottom:1.8rem}
@@ -112,6 +123,14 @@
 
 <!-- ============ LOGIN ============ -->
 <div id="login" class="hidden">
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+  <div class="coin" style="left:12%;font-size:2rem;animation-delay:0s">₨</div>
+  <div class="coin" style="left:30%;font-size:1.4rem;animation-delay:-4s">$</div>
+  <div class="coin" style="left:68%;font-size:2.4rem;animation-delay:-8s">₨</div>
+  <div class="coin" style="left:85%;font-size:1.6rem;animation-delay:-12s">€</div>
+  <div class="coin" style="left:50%;font-size:1.8rem;animation-delay:-15s">₨</div>
   <div class="login-card">
     <div class="logo">Spend<span>Wise</span></div>
     <p>Track every rupee across wallets &amp; budgets</p>
