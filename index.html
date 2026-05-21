@@ -406,11 +406,15 @@ function render(){
 
   document.getElementById('category-cards').innerHTML=state.categories.map(c=>{
     const rem=catAllocated(c.id)-catSpent(c.id);
-    return `<div class="entity-card"><div class="ec-icon" style="background:${c.color}22;color:${c.color}"><i class="ti ${c.icon}"></i></div>
+    return `<div class="entity-card"><div class="ec-actions">
+        <button class="ec-act-btn" onclick="openCategoryModal('${c.id}')" title="Edit"><i class="ti ti-edit"></i></button>
+        <button class="ec-act-btn del" onclick="openDeleteCategory('${c.id}')" title="Delete"><i class="ti ti-trash"></i></button>
+      </div>
+      <div class="ec-icon" style="background:${c.color}22;color:${c.color}"><i class="ti ${c.icon}"></i></div>
       <div class="ec-name">${c.name}</div><div class="ec-desc">Budget: ${fmt(catAllocated(c.id))}</div>
       <div class="ec-balance" style="color:${rem<0?'#f87171':'#34d399'}">${fmt(rem)}</div>
       <div class="ec-meta">${rem<0?'Overspent':'Remaining'} · spent ${fmt(catSpent(c.id))}</div></div>`;
-  }).join('');
+  }).join('')+`<div class="add-entity-card" onclick="openCategoryModal()"><i class="ti ti-plus"></i><span style="font-weight:600;font-size:0.88rem">Add Category</span></div>`;
 
   document.getElementById('exp-wallet').innerHTML=state.wallets.map(w=>`<option value="${w.id}">${w.name} (${fmt(walletBalance(w.id))})</option>`).join('');
   document.getElementById('exp-cat').innerHTML=state.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
@@ -610,6 +614,90 @@ async function confirmDeleteWallet(id, hasBalance){
   const { error } = await sb.from('wallets').delete().eq('id',id);
   if(error){ showToast(error.message,'ti-alert-circle',true); document.getElementById('dw-confirm').disabled=false; return; }
   closeModal(); await loadAll(); showToast(hasBalance?'Balance transferred & wallet deleted':'Wallet deleted','ti-check');
+}
+
+/* ---------- CATEGORY MANAGEMENT (add / edit / delete) ---------- */
+const CAT_COLORS=['#60a5fa','#34d399','#f472b6','#fbbf24','#a78bfa','#fb923c','#22d3ee','#f87171'];
+
+function openCategoryModal(id){
+  const editing=!!id;
+  const c=editing?state.categories.find(x=>x.id===id):null;
+  const used=state.categories.map(x=>x.color);
+  const defColor=c?c.color:(CAT_COLORS.find(x=>!used.includes(x))||CAT_COLORS[0]);
+  document.getElementById('modal-root').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+      <h3><i class="ti ${editing?'ti-edit':'ti-tag'}" style="color:#34d399"></i> ${editing?'Edit Category':'Add Category'}</h3>
+      <div class="field"><label>Category Name</label><input type="text" class="form-input" id="cm-name" placeholder="e.g. Food" value="${c?c.name.replace(/"/g,'&quot;'):''}"></div>
+      <div class="field"><label>Colour</label><div id="cm-colors" style="display:flex;gap:8px;flex-wrap:wrap">
+        ${CAT_COLORS.map(x=>`<div onclick="pickColor(this,'${x}')" data-c="${x}" style="width:30px;height:30px;border-radius:8px;background:${x};cursor:pointer;border:2px solid ${x===defColor?'#fff':'transparent'}"></div>`).join('')}
+      </div></div>
+      <div class="modal-actions">
+        <button class="modal-btn ghost" onclick="closeModal()">Cancel</button>
+        <button class="modal-btn primary" id="cm-save" onclick="saveCategory(${editing?`'${id}'`:'null'})">${editing?'Save Changes':'Add Category'}</button>
+      </div>
+    </div></div>`;
+  window._pickedColor=defColor;
+  setTimeout(()=>document.getElementById('cm-name').focus(),50);
+}
+async function saveCategory(id){
+  const name=document.getElementById('cm-name').value.trim();
+  const color=window._pickedColor||'#60a5fa';
+  if(!name){ showToast('Enter a category name','ti-alert-circle',true); return; }
+  document.getElementById('cm-save').disabled=true;
+  let error;
+  if(id){
+    ({ error } = await sb.from('categories').update({name, color}).eq('id',id));
+  } else {
+    ({ error } = await sb.from('categories').insert({user_id:user.id, name, color, icon:'ti-tag'}));
+  }
+  if(error){ showToast(error.message,'ti-alert-circle',true); document.getElementById('cm-save').disabled=false; return; }
+  closeModal(); await loadAll(); showToast(id?'Category updated':'Category added','ti-check');
+}
+
+function openDeleteCategory(id){
+  const c=state.categories.find(x=>x.id===id);
+  const rem=catAllocated(id)-catSpent(id);
+  const others=state.categories.filter(x=>x.id!==id);
+  const hasBalance=Math.round(rem)!==0;
+
+  if(state.categories.length<=1){
+    document.getElementById('modal-root').innerHTML=`
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+        <h3><i class="ti ti-alert-triangle" style="color:#fbbf24"></i> Can't delete</h3>
+        <div class="modal-note warn">You need at least one category. Add another before deleting this one.</div>
+        <div class="modal-actions"><button class="modal-btn ghost" onclick="closeModal()">OK</button></div>
+      </div></div>`;
+    return;
+  }
+
+  document.getElementById('modal-root').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">
+      <h3><i class="ti ti-trash" style="color:#f87171"></i> Delete "${c.name}"</h3>
+      ${hasBalance
+        ? `<div class="modal-note warn"><i class="ti ti-info-circle"></i> This category has a remaining budget of <b>${fmt(rem)}</b>. You must reassign it to another category before deleting.</div>
+           <div class="field"><label>Move remaining budget to</label>
+             <select class="form-select" id="dc-target">${others.map(o=>`<option value="${o.id}">${o.name}</option>`).join('')}</select></div>`
+        : `<div class="modal-note">This category has nothing remaining and can be safely deleted. This cannot be undone.</div>`}
+      <div class="modal-actions">
+        <button class="modal-btn ghost" onclick="closeModal()">Cancel</button>
+        <button class="modal-btn danger" id="dc-confirm" onclick="confirmDeleteCategory('${id}',${hasBalance})">${hasBalance?'Reassign & Delete':'Delete'}</button>
+      </div>
+    </div></div>`;
+}
+async function confirmDeleteCategory(id, hasBalance){
+  document.getElementById('dc-confirm').disabled=true;
+  if(hasBalance){
+    const target=document.getElementById('dc-target').value;
+    // move income allocations to the target category so its budget follows
+    const { error:aerr } = await sb.from('allocations')
+      .update({category_id:target}).eq('category_id',id).eq('target_type','category');
+    if(aerr){ showToast(aerr.message,'ti-alert-circle',true); document.getElementById('dc-confirm').disabled=false; return; }
+    // reassign any expenses that referenced this category
+    await sb.from('expenses').update({category_id:target}).eq('category_id',id);
+  }
+  const { error } = await sb.from('categories').delete().eq('id',id);
+  if(error){ showToast(error.message,'ti-alert-circle',true); document.getElementById('dc-confirm').disabled=false; return; }
+  closeModal(); await loadAll(); showToast(hasBalance?'Budget reassigned & category deleted':'Category deleted','ti-check');
 }
 
 /* ---------- TOAST ---------- */
