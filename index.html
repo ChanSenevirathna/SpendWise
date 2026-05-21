@@ -279,11 +279,39 @@ async function boot(){
     document.getElementById('li-submit').disabled=true;
     return;
   }
-  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+    auth:{ detectSessionInUrl:true, flowType:'implicit', persistSession:true, autoRefreshToken:true }
+  });
+
+  // Listen for auth changes FIRST so we catch the session arriving from the OAuth redirect.
+  sb.auth.onAuthStateChange((event, session)=>{
+    if(session && !user){ user=session.user; cleanUrlHash(); enterApp(); }
+    if(event==='SIGNED_OUT'){ user=null; }
+  });
+
+  // Also check for an existing session on load (normal page open / refresh).
   const { data:{ session } } = await sb.auth.getSession();
-  if(session){ user = session.user; await enterApp(); }
-  else { showLogin(); }
-  sb.auth.onAuthStateChange((_e, s)=>{ if(s && !user){ user=s.user; enterApp(); } });
+  if(session){ user=session.user; cleanUrlHash(); enterApp(); }
+  else if(!window.location.hash.includes('access_token')){
+    // No session and no token in URL → show login.
+    showLogin();
+  } else {
+    // A token is in the URL but the session isn't ready yet.
+    // onAuthStateChange will normally fire — but add a fallback in case it doesn't.
+    setTimeout(async ()=>{
+      if(user) return;
+      const { data:{ session:s2 } } = await sb.auth.getSession();
+      if(s2){ user=s2.user; cleanUrlHash(); enterApp(); }
+      else { showLogin(); showToast('Google sign-in didn\'t complete — try again','ti-alert-circle',true); }
+    }, 2500);
+  }
+}
+
+// Remove the #access_token=... fragment from the URL after login so it looks clean.
+function cleanUrlHash(){
+  if(window.location.hash){
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
 }
 
 function showLogin(){
