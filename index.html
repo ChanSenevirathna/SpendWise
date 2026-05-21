@@ -58,6 +58,19 @@
   .panel{display:none;padding:2rem;max-width:1080px;margin:0 auto}.panel.active{display:block}
 
   .metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.9rem;margin-bottom:1.5rem}
+  /* DATE RANGE BAR */
+  .range-bar{display:flex;align-items:center;gap:1rem;background:#161d2e;border:1px solid #1e2332;border-radius:12px;padding:0.9rem 1.2rem;margin-bottom:1.3rem;flex-wrap:wrap}
+  .range-bar .rb-label{font-size:0.78rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .range-bar .rb-field{display:flex;flex-direction:column;gap:3px}
+  .range-bar .rb-field small{font-size:0.68rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px}
+  .range-bar input[type=date]{background:#0d0f14;border:1px solid #1e2332;border-radius:8px;padding:0.45rem 0.7rem;color:#e2e8f0;font-size:0.85rem;outline:none;font-family:inherit;color-scheme:dark}
+  .range-bar input[type=date]:focus{border-color:#34d39966}
+  .rb-presets{display:flex;gap:0.4rem;margin-left:auto;flex-wrap:wrap}
+  .rb-preset{background:#0d0f14;border:1px solid #1e2332;color:#94a3b8;border-radius:7px;padding:0.4rem 0.8rem;font-size:0.78rem;font-weight:600;cursor:pointer}
+  .rb-preset:hover{border-color:#34d39955;color:#34d399}
+  .rb-preset.active{background:#1e2d27;border-color:#34d39955;color:#34d399}
+  .rb-info{font-size:0.74rem;color:#64748b;margin-top:0.5rem;display:flex;align-items:center;gap:6px}
+  .rb-info.warn{color:#fbbf24}
   .metric-card{background:#161d2e;border:1px solid #1e2332;border-radius:12px;padding:1.1rem}
   .metric-label{font-size:0.74rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:0.4rem;display:flex;align-items:center;gap:5px}
   .metric-val{font-size:1.5rem;font-weight:800}
@@ -183,17 +196,28 @@
   </div>
 
   <div class="panel active" data-panel="dashboard">
+    <div class="range-bar">
+      <div class="rb-label"><i class="ti ti-calendar"></i> Period</div>
+      <div class="rb-field"><small>From</small><input type="date" id="range-from" onchange="onRangeChange('from')"></div>
+      <div class="rb-field"><small>To</small><input type="date" id="range-to" onchange="onRangeChange('to')"></div>
+      <div class="rb-presets">
+        <button class="rb-preset" data-preset="thisMonth" onclick="applyPreset('thisMonth',this)">This month</button>
+        <button class="rb-preset" data-preset="last30" onclick="applyPreset('last30',this)">Last 30 days</button>
+        <button class="rb-preset" data-preset="last60" onclick="applyPreset('last60',this)">Last 60 days</button>
+      </div>
+    </div>
+    <div class="rb-info" id="range-info"></div>
     <div class="metric-row">
       <div class="metric-card"><div class="metric-label"><i class="ti ti-coins"></i> Net Balance</div><div class="metric-val green" id="m-balance">—</div></div>
-      <div class="metric-card"><div class="metric-label"><i class="ti ti-arrow-down-left"></i> Total Income</div><div class="metric-val blue" id="m-income">—</div></div>
-      <div class="metric-card"><div class="metric-label"><i class="ti ti-arrow-up-right"></i> Total Spent</div><div class="metric-val red" id="m-spent">—</div></div>
+      <div class="metric-card"><div class="metric-label"><i class="ti ti-arrow-down-left"></i> Income (period)</div><div class="metric-val blue" id="m-income">—</div></div>
+      <div class="metric-card"><div class="metric-label"><i class="ti ti-arrow-up-right"></i> Spent (period)</div><div class="metric-val red" id="m-spent">—</div></div>
       <div class="metric-card"><div class="metric-label"><i class="ti ti-alert-triangle"></i> Overspent</div><div class="metric-val amber" id="m-over">0</div></div>
     </div>
     <div class="dash-grid">
-      <div class="dash-box"><h4><i class="ti ti-wallet"></i> Balance by Wallet</h4><div class="chart-wrap"><canvas id="walletChart"></canvas></div></div>
-      <div class="dash-box"><h4><i class="ti ti-chart-donut"></i> Spending by Category</h4><div class="chart-wrap"><canvas id="catChart"></canvas></div></div>
+      <div class="dash-box"><h4><i class="ti ti-wallet"></i> Balance by Wallet <span style="margin-left:auto;font-size:0.68rem;color:#64748b;font-weight:500;text-transform:none;letter-spacing:0">current total</span></h4><div class="chart-wrap"><canvas id="walletChart"></canvas></div></div>
+      <div class="dash-box"><h4><i class="ti ti-chart-donut"></i> Spending by Category <span style="margin-left:auto;font-size:0.68rem;color:#64748b;font-weight:500;text-transform:none;letter-spacing:0">in period</span></h4><div class="chart-wrap"><canvas id="catChart"></canvas></div></div>
     </div>
-    <div class="dash-box" style="margin-top:1.2rem"><h4><i class="ti ti-target"></i> Remaining Budgets</h4><div id="budget-progress"></div></div>
+    <div class="dash-box" style="margin-top:1.2rem"><h4><i class="ti ti-target"></i> Remaining Budgets <span style="margin-left:auto;font-size:0.68rem;color:#64748b;font-weight:500;text-transform:none;letter-spacing:0">spending in period</span></h4><div id="budget-progress"></div></div>
   </div>
 
   <div class="panel" data-panel="wallets">
@@ -267,6 +291,8 @@ let user = null;
 let state = { wallets:[], categories:[], incomes:[], expenses:[], allocations:[] };
 let charts = { wallet:null, cat:null };
 let signupMode = false;
+let range = { from:null, to:null }; // active date range (YYYY-MM-DD strings)
+const MAX_RANGE_DAYS = 60;
 
 /* ---------- BOOT ---------- */
 async function boot(){
@@ -357,8 +383,13 @@ async function enterApp(){
   else { av.textContent=(meta.name||user.email)[0].toUpperCase(); }
   document.getElementById('inc-date').value=today();
   document.getElementById('exp-date').value=today();
+  // default date range = current month (1st → last day)
+  const now=new Date();
+  range.from=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];
+  range.to=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().split('T')[0];
   initCharts();
   await loadAll();
+  setRangeInputs();
   document.getElementById('loading').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
 }
@@ -385,31 +416,98 @@ function walletBalance(id){
 }
 function catAllocated(id){ return state.allocations.filter(a=>a.target_type==='category'&&a.category_id===id).reduce((s,a)=>s+Number(a.amount),0); }
 function catSpent(id){ return state.expenses.filter(e=>e.category_id===id).reduce((s,e)=>s+Number(e.amount),0); }
+// period-scoped spending for a category (respects the active date range)
+function catSpentInRange(id){ return state.expenses.filter(e=>e.category_id===id&&inRange(e.txn_date)).reduce((s,e)=>s+Number(e.amount),0); }
+
+/* ---------- DATE RANGE ---------- */
+function daysBetween(a,b){ return Math.round((new Date(b)-new Date(a))/86400000); }
+
+function setRangeInputs(){
+  document.getElementById('range-from').value=range.from;
+  document.getElementById('range-to').value=range.to;
+  // keep the native pickers within a valid 60-day window of each other
+  const from=document.getElementById('range-from'), to=document.getElementById('range-to');
+  const maxToFromStart=new Date(new Date(range.from).getTime()+MAX_RANGE_DAYS*86400000).toISOString().split('T')[0];
+  to.min=range.from; to.max=maxToFromStart;
+  from.max=range.to;
+  highlightPreset();
+  updateRangeInfo();
+}
+function updateRangeInfo(){
+  const info=document.getElementById('range-info');
+  const d=daysBetween(range.from,range.to)+1;
+  info.className='rb-info';
+  info.innerHTML=`<i class="ti ti-info-circle"></i> Showing ${d} day${d!==1?'s':''} · ${fmtDate(range.from)} → ${fmtDate(range.to)}`;
+}
+function fmtDate(s){ const d=new Date(s); return d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}); }
+
+function applyPreset(p, btn){
+  const now=new Date();
+  if(p==='thisMonth'){
+    range.from=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];
+    range.to=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().split('T')[0];
+  } else if(p==='last30'){
+    range.to=now.toISOString().split('T')[0];
+    range.from=new Date(now.getTime()-29*86400000).toISOString().split('T')[0];
+  } else if(p==='last60'){
+    range.to=now.toISOString().split('T')[0];
+    range.from=new Date(now.getTime()-59*86400000).toISOString().split('T')[0];
+  }
+  setRangeInputs(); render();
+}
+function highlightPreset(){
+  const now=new Date();
+  const mStart=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];
+  const mEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().split('T')[0];
+  document.querySelectorAll('.rb-preset').forEach(b=>b.classList.remove('active'));
+  if(range.from===mStart&&range.to===mEnd) document.querySelector('[data-preset="thisMonth"]')?.classList.add('active');
+}
+function onRangeChange(which){
+  let from=document.getElementById('range-from').value;
+  let to=document.getElementById('range-to').value;
+  if(!from||!to) return;
+  // ensure from <= to
+  if(new Date(from)>new Date(to)){ if(which==='from') to=from; else from=to; }
+  // enforce max 60 days
+  if(daysBetween(from,to)+1 > MAX_RANGE_DAYS){
+    if(which==='to'){ from=new Date(new Date(to).getTime()-(MAX_RANGE_DAYS-1)*86400000).toISOString().split('T')[0]; }
+    else { to=new Date(new Date(from).getTime()+(MAX_RANGE_DAYS-1)*86400000).toISOString().split('T')[0]; }
+    showToast('Range limited to 60 days','ti-info-circle');
+  }
+  range.from=from; range.to=to;
+  setRangeInputs(); render();
+}
+function inRange(dateStr){ return dateStr>=range.from && dateStr<=range.to; }
 
 /* ---------- RENDER ---------- */
 function render(){
-  const totalIncome=state.incomes.reduce((s,i)=>s+Number(i.amount),0);
-  const totalSpent=state.expenses.reduce((s,e)=>s+Number(e.amount),0);
+  // period-scoped income & spend
+  const totalIncome=state.incomes.filter(i=>inRange(i.txn_date)).reduce((s,i)=>s+Number(i.amount),0);
+  const totalSpent=state.expenses.filter(e=>inRange(e.txn_date)).reduce((s,e)=>s+Number(e.amount),0);
+  // net balance stays cumulative (real current money)
   const netBalance=state.wallets.reduce((s,w)=>s+walletBalance(w.id),0);
-  const overspent=state.categories.filter(c=>catSpent(c.id)>catAllocated(c.id)).length;
+  // overspent = categories whose in-period spend exceeds their allocated budget
+  const overspent=state.categories.filter(c=>catSpentInRange(c.id)>catAllocated(c.id)).length;
 
   document.getElementById('m-balance').textContent=fmt(netBalance);
   document.getElementById('m-income').textContent=fmt(totalIncome);
   document.getElementById('m-spent').textContent=fmt(totalSpent);
   document.getElementById('m-over').textContent=overspent;
 
+  // wallet chart — cumulative current balances
   charts.wallet.data.labels=state.wallets.map(w=>w.name);
   charts.wallet.data.datasets[0].data=state.wallets.map(w=>Math.max(0,walletBalance(w.id)));
   charts.wallet.data.datasets[0].backgroundColor=state.wallets.map(w=>w.color);
   charts.wallet.update();
-  const sc=state.categories.filter(c=>catSpent(c.id)>0);
+  // category chart — spending within the selected period
+  const sc=state.categories.filter(c=>catSpentInRange(c.id)>0);
   charts.cat.data.labels=sc.map(c=>c.name);
-  charts.cat.data.datasets[0].data=sc.map(c=>catSpent(c.id));
+  charts.cat.data.datasets[0].data=sc.map(c=>catSpentInRange(c.id));
   charts.cat.data.datasets[0].backgroundColor=sc.map(c=>c.color);
   charts.cat.update();
 
   document.getElementById('budget-progress').innerHTML=state.categories.map(c=>{
-    const alloc=catAllocated(c.id), spent=catSpent(c.id);
+    const alloc=catAllocated(c.id), spent=catSpentInRange(c.id);
     const pct=alloc>0?Math.min(100,Math.round(spent/alloc*100)):(spent>0?100:0);
     const over=spent>alloc, rem=alloc-spent;
     const bar=over?'#f87171':pct>80?'#fbbf24':c.color;
